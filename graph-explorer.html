@@ -1,0 +1,711 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Interactive graph explorer — visualize graphs and run path-finding algorithms." />
+    <title>Graph Explorer — Zachary Walton</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/10.0.2/standalone/umd/vis-network.min.js"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              ink: { 950: "#0b0d12", 900: "#0f1219", 850: "#141826", 800: "#1a2030", 700: "#242c40" },
+              purpleMid: { 50: "#f4f1ff", 500: "#7c4dff", 600: "#6b38f5", 700: "#5928d8" },
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      #graph-container, #dfs-forest-container { width: 100%; height: 500px; background: #0f1219; border-radius: 1rem; }
+      .vis-network canvas { border-radius: 1rem; }
+      .path-edge { stroke: #7c4dff !important; stroke-width: 3 !important; }
+      .visited-node { background: rgba(124, 77, 255, 0.4) !important; }
+    </style>
+  </head>
+  <body class="min-h-screen bg-ink-950 text-slate-100 antialiased">
+    <header class="sticky top-0 z-40 border-b border-white/5 bg-ink-950/90 backdrop-blur">
+      <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
+        <a href="https://github.com/zachxwalton/graphviewer" target="_blank" rel="noreferrer" class="group inline-flex items-center gap-2">
+          <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-ink-800 ring-1 ring-white/10 group-hover:ring-purpleMid-500/40">
+            <span class="h-2.5 w-2.5 rounded-full bg-purpleMid-500"></span>
+          </span>
+          <span class="text-sm font-semibold tracking-wide text-white">Graph Viewer</span>
+        </a>
+        <a href="https://github.com/zachxwalton/graphviewer" target="_blank" rel="noreferrer" class="text-sm text-slate-300 hover:text-white">View on GitHub</a>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      <section class="mb-8">
+        <h1 class="text-3xl font-bold text-white">Graph Explorer</h1>
+      </section>
+
+      <!-- Load Graph -->
+      <section class="mb-6 rounded-2xl bg-ink-900/60 p-6 ring-1 ring-white/10">
+        <h2 class="text-lg font-semibold text-white">Load Graph</h2>
+        <div class="mt-4 flex flex-wrap gap-4">
+          <div class="flex items-center gap-2">
+            <select id="sample-select" class="rounded-xl border-0 bg-ink-800 px-4 py-2.5 text-sm text-slate-200 ring-1 ring-white/10 focus:ring-2 focus:ring-purpleMid-500">
+              <option value="15">15 nodes</option>
+              <option value="50">50 nodes</option>
+              <option value="100">100 nodes</option>
+              <option value="150">150 nodes</option>
+              <option value="250">250 nodes</option>
+              <option value="500">500 nodes</option>
+              <option value="600">600 nodes</option>
+              <option value="700">700 nodes</option>
+              <option value="800">800 nodes</option>
+              <option value="900">900 nodes</option>
+              <option value="1000">1000 nodes</option>
+            </select>
+            <button type="button" id="load-sample" class="rounded-xl bg-ink-800 px-4 py-2.5 text-sm font-semibold text-slate-200 ring-1 ring-white/10 hover:bg-ink-700 hover:text-white">
+              Load sample
+            </button>
+          </div>
+        </div>
+        <p class="mt-2 text-xs text-slate-400">
+          Sample graphs are generated randomly each time. For best performance, graphs under ~1000 nodes render smoothly.
+        </p>
+      </section>
+
+      <!-- Graph type -->
+      <section class="mb-6 flex flex-wrap items-center gap-4">
+        <span class="text-sm font-medium text-slate-300">Graph type:</span>
+        <label class="flex cursor-pointer items-center gap-2">
+          <input type="radio" name="graph-type" value="undirected" checked class="rounded-full border-ink-600 text-purpleMid-500 focus:ring-purpleMid-500" />
+          <span class="text-sm text-slate-200">Undirected</span>
+        </label>
+        <label class="flex cursor-pointer items-center gap-2">
+          <input type="radio" name="graph-type" value="directed" class="rounded-full border-ink-600 text-purpleMid-500 focus:ring-purpleMid-500" />
+          <span class="text-sm text-slate-200">Directed</span>
+        </label>
+      </section>
+
+      <!-- Graph canvas -->
+      <section class="mb-6">
+        <div id="graph-container"></div>
+        <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-400">
+          <span id="graph-stats">No graph loaded. Drag to pan, scroll to zoom.</span>
+          <div class="flex gap-2">
+            <button type="button" id="fit-btn" class="rounded-lg bg-ink-800 px-3 py-1.5 text-slate-300 hover:bg-ink-700 hover:text-white">Fit to screen</button>
+            <button type="button" id="reset-btn" class="rounded-lg bg-ink-800 px-3 py-1.5 text-slate-300 hover:bg-ink-700 hover:text-white">Reset layout</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Shortest path -->
+      <section class="rounded-2xl bg-ink-900/60 p-6 ring-1 ring-white/10">
+        <h2 class="text-lg font-semibold text-white">Shortest Path</h2>
+        <p class="mt-1 text-sm text-slate-300">Select two vertices and run an algorithm to find the shortest path between them.</p>
+        <div class="mt-4 flex flex-wrap items-end gap-4">
+          <div>
+            <label class="block text-xs text-slate-400">Source vertex</label>
+            <input type="text" id="source-input" placeholder="e.g. 0" class="mt-1 w-32 rounded-lg bg-ink-800 px-3 py-2 text-sm text-slate-200 ring-1 ring-white/10" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400">Target vertex</label>
+            <input type="text" id="target-input" placeholder="e.g. 10" class="mt-1 w-32 rounded-lg bg-ink-800 px-3 py-2 text-sm text-slate-200 ring-1 ring-white/10" />
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" id="run-bfs" class="rounded-xl bg-purpleMid-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purpleMid-500">BFS</button>
+            <button type="button" id="run-dfs" class="rounded-xl bg-ink-800 px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 hover:bg-ink-700">DFS</button>
+            <button type="button" id="run-dijkstra" class="rounded-xl bg-ink-800 px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 hover:bg-ink-700">Dijkstra</button>
+          </div>
+        </div>
+        <div id="path-result" class="mt-4 rounded-xl bg-ink-850/60 p-4 text-sm text-slate-200"></div>
+      </section>
+
+      <!-- DFS Forest -->
+      <section class="mt-6 rounded-2xl bg-ink-900/60 p-6 ring-1 ring-white/10">
+        <h2 class="text-lg font-semibold text-white">DFS Forest</h2>
+        <p class="mt-1 text-sm text-slate-300">
+          Run DFS from a starting node. Produces a tree of all reachable nodes with parent and descendant relationships.
+        </p>
+        <div class="mt-4 flex flex-wrap items-end gap-4">
+          <div>
+            <label class="block text-xs text-slate-400">Start node</label>
+            <input type="text" id="dfs-start-input" placeholder="e.g. 0" class="mt-1 w-32 rounded-lg bg-ink-800 px-3 py-2 text-sm text-slate-200 ring-1 ring-white/10" />
+          </div>
+          <button type="button" id="run-dfs-forest" class="rounded-xl bg-purpleMid-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purpleMid-500">
+            Generate DFS Forest
+          </button>
+          <button type="button" id="forest-fit-btn" class="rounded-xl bg-ink-800 px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 hover:bg-ink-700 hover:text-white">
+            Fit forest
+          </button>
+        </div>
+        <div id="dfs-forest-progress" class="mt-4 hidden rounded-xl bg-ink-850/60 p-4">
+          <div class="mb-2 flex justify-between text-sm text-slate-300">
+            <span id="dfs-progress-label">Running DFS...</span>
+            <span id="dfs-progress-pct">0%</span>
+          </div>
+          <div class="h-2 w-full overflow-hidden rounded-full bg-ink-800">
+            <div id="dfs-progress-bar" class="h-full bg-purpleMid-500 transition-all duration-150" style="width: 0%"></div>
+          </div>
+        </div>
+        <div id="dfs-forest-container" class="mt-4"></div>
+        <div id="dfs-forest-result" class="mt-4 max-h-48 overflow-auto rounded-xl bg-ink-850/60 p-4 font-mono text-xs text-slate-200"></div>
+      </section>
+    </main>
+
+    <script>
+      (function () {
+        function generateSampleGraph(n) {
+          const nodes = Array.from({ length: n }, (_, i) => String(i));
+          const edgeSet = new Set();
+
+          for (let i = 0; i < n - 1; i++) {
+            const a = String(i);
+            const b = String(i + 1);
+            edgeSet.add(a < b ? `${a}\t${b}` : `${b}\t${a}`);
+          }
+          edgeSet.add(`0\t${n - 1}`);
+
+          const numExtra = Math.floor(n * 2.2) - n;
+          let added = 0;
+          while (added < numExtra) {
+            const u = Math.floor(Math.random() * n);
+            const v = Math.floor(Math.random() * n);
+            if (u !== v) {
+              const key = u < v ? `${u}\t${v}` : `${v}\t${u}`;
+              if (!edgeSet.has(key)) {
+                edgeSet.add(key);
+                added++;
+              }
+            }
+          }
+
+          const edges = Array.from(edgeSet).map((s) => {
+            const [from, to] = s.split('\t');
+            return { from, to };
+          });
+          return { nodes, edges };
+        }
+
+        let graphData = null;
+        let network = null;
+        let forestNetwork = null;
+        let isDirected = false;
+
+        function getGraphType() {
+          return document.querySelector('input[name="graph-type"]:checked').value === 'directed';
+        }
+
+        function buildGraph(nodes, edges, directed) {
+          const nodeList = nodes.map((id) => ({ id, label: String(id) }));
+          const edgeList = edges.map((e, i) => ({
+            id: i,
+            from: e.from,
+            to: e.to,
+            arrows: directed ? 'to' : undefined,
+          }));
+          return { nodes: nodeList, edges: edgeList };
+        }
+
+        function buildAdjacency(nodes, edges, directed) {
+          const adj = new Map();
+          for (const n of nodes) adj.set(n, []);
+          for (const e of edges) {
+            adj.get(e.from).push(e.to);
+            if (!directed && e.from !== e.to) adj.get(e.to).push(e.from);
+          }
+          return adj;
+        }
+
+        function renderGraph(data) {
+          const container = document.getElementById('graph-container');
+          const options = {
+            nodes: {
+              shape: 'dot',
+              size: 12,
+              color: { background: '#4a5568', border: '#718096' },
+              font: { color: '#e2e8f0', size: 10 },
+            },
+            edges: {
+              color: { color: '#64748b' },
+              width: 1,
+            },
+            physics: {
+              enabled: true,
+              forceAtlas2Based: {
+                gravitationalConstant: -50,
+                centralGravity: 0.01,
+                springLength: 150,
+                springConstant: 0.08,
+              },
+              solver: 'forceAtlas2Based',
+              stabilization: { iterations: 150 },
+            },
+            interaction: {
+              zoomView: true,
+              dragView: true,
+              hover: true,
+            },
+          };
+
+          if (network) network.destroy();
+          network = new vis.Network(container, data, options);
+
+          network.on('stabilizationIterationsDone', () => {
+            network.setOptions({ physics: false });
+          });
+
+          document.getElementById('graph-stats').textContent =
+            `${data.nodes.length} nodes, ${data.edges.length} edges. Drag to pan, scroll to zoom.`;
+        }
+
+        function updateGraph() {
+          if (!graphData) return;
+          isDirected = getGraphType();
+          const visData = buildGraph(graphData.nodes, graphData.edges, isDirected);
+          renderGraph(visData);
+        }
+
+        function loadGraph(nodes, edges) {
+          graphData = { nodes, edges };
+          updateGraph();
+        }
+
+        function highlightPath(path, visited) {
+          if (!network || !graphData) return;
+          const nodes = graphData.nodes;
+          const edgeSet = new Set();
+          for (let i = 0; i < path.length - 1; i++) {
+            edgeSet.add(`${path[i]}-${path[i + 1]}`);
+            if (!isDirected) edgeSet.add(`${path[i + 1]}-${path[i]}`);
+          }
+
+          const nodeUpdates = nodes.map((n) => ({
+            id: n,
+            color: {
+              background: path.includes(n) ? '#7c4dff' : visited.has(n) ? 'rgba(124, 77, 255, 0.4)' : '#4a5568',
+              border: path.includes(n) ? '#9d79ff' : '#718096',
+            },
+          }));
+          network.body.data.nodes.update(nodeUpdates);
+
+          const edgeUpdates = graphData.edges.map((e, i) => {
+            const key1 = `${e.from}-${e.to}`;
+            const key2 = `${e.to}-${e.from}`;
+            const onPath = edgeSet.has(key1) || edgeSet.has(key2);
+            return { id: i, color: onPath ? { color: '#7c4dff' } : { color: '#64748b' }, width: onPath ? 3 : 1 };
+          });
+          network.body.data.edges.update(edgeUpdates);
+        }
+
+        function resetHighlight() {
+          if (!network || !graphData) return;
+          const nodeUpdates = graphData.nodes.map((n) => ({
+            id: n,
+            color: { background: '#4a5568', border: '#718096' },
+          }));
+          network.body.data.nodes.update(nodeUpdates);
+          const edgeUpdates = graphData.edges.map((e, i) => ({
+            id: i,
+            color: { color: '#64748b' },
+            width: 1,
+          }));
+          network.body.data.edges.update(edgeUpdates);
+        }
+
+        function dfs(adj, start, end) {
+          const visited = new Set();
+          const stack = [[start]];
+          visited.add(start);
+
+          while (stack.length > 0) {
+            const path = stack.pop();
+            const node = path[path.length - 1];
+            if (node === end) return { path, visited };
+
+            for (const neighbor of adj.get(node) || []) {
+              if (!visited.has(neighbor)) {
+                visited.add(neighbor);
+                stack.push([...path, neighbor]);
+              }
+            }
+          }
+          return { path: null, visited };
+        }
+
+        function bfs(adj, start, end) {
+          const visited = new Set();
+          const queue = [[start]];
+          visited.add(start);
+
+          while (queue.length > 0) {
+            const path = queue.shift();
+            const node = path[path.length - 1];
+            if (node === end) return { path, visited };
+
+            for (const neighbor of adj.get(node) || []) {
+              if (!visited.has(neighbor)) {
+                visited.add(neighbor);
+                queue.push([...path, neighbor]);
+              }
+            }
+          }
+          return { path: null, visited };
+        }
+
+        function dijkstra(adj, start, end) {
+          const dist = new Map();
+          const prev = new Map();
+          const visited = new Set();
+          const pq = [[0, start]];
+          dist.set(start, 0);
+
+          while (pq.length > 0) {
+            pq.sort((a, b) => a[0] - b[0]);
+            const [d, node] = pq.shift();
+            if (visited.has(node)) continue;
+            visited.add(node);
+            if (node === end) break;
+
+            for (const neighbor of adj.get(node) || []) {
+              const alt = d + 1;
+              if ((!dist.has(neighbor) || alt < dist.get(neighbor)) && !visited.has(neighbor)) {
+                dist.set(neighbor, alt);
+                prev.set(neighbor, node);
+                pq.push([alt, neighbor]);
+              }
+            }
+          }
+
+          const path = [];
+          let cur = end;
+          while (cur != null) {
+            path.unshift(cur);
+            cur = prev.get(cur);
+          }
+          return path[0] === start ? { path, visited } : { path: null, visited };
+        }
+
+        function dfsForest(adj, start) {
+          const visited = new Set();
+          const parent = new Map();
+          const children = new Map();
+          const visitOrder = [];
+          const roots = [start];
+
+          const stack = [start];
+          visited.add(start);
+          parent.set(start, null);
+          children.set(start, []);
+          visitOrder.push(start);
+
+          while (stack.length > 0) {
+            const u = stack.pop();
+            for (const v of adj.get(u) || []) {
+              if (!visited.has(v)) {
+                visited.add(v);
+                parent.set(v, u);
+                children.set(v, []);
+                children.get(u).push(v);
+                visitOrder.push(v);
+                stack.push(v);
+              }
+            }
+          }
+          return { roots, visitOrder, parent, children };
+        }
+
+        async function dfsForestWithProgress(adj, start, totalNodes, onProgress) {
+          const visited = new Set();
+          const parent = new Map();
+          const children = new Map();
+          const visitOrder = [];
+          const preOrder = new Map();
+          const postOrder = new Map();
+          const roots = [start];
+
+          let counter = 1;
+          let iter = 0;
+
+          const yieldControl = () => new Promise((r) => setTimeout(r, 0));
+
+          const stack = [{ node: start, phase: 'enter' }];
+          visited.add(start);
+          parent.set(start, null);
+          children.set(start, []);
+
+          while (stack.length > 0) {
+            const { node: u, phase } = stack.pop();
+
+            if (phase === 'enter') {
+              preOrder.set(u, counter++);
+              visitOrder.push(u);
+              stack.push({ node: u, phase: 'exit' });
+
+              const neighbors = adj.get(u) || [];
+              for (let i = neighbors.length - 1; i >= 0; i--) {
+                const v = neighbors[i];
+                if (!visited.has(v)) {
+                  visited.add(v);
+                  parent.set(v, u);
+                  children.set(v, []);
+                  children.get(u).push(v);
+                  stack.push({ node: v, phase: 'enter' });
+                }
+              }
+            } else if (phase === 'exit') {
+              postOrder.set(u, counter++);
+            }
+
+            iter++;
+            if (iter % 50 === 0 || stack.length === 0) {
+              const pct = Math.min(100, Math.round((visited.size / totalNodes) * 100));
+              onProgress(visited.size, pct);
+              await yieldControl();
+            }
+          }
+
+          onProgress(visited.size, 100);
+          return { roots, visitOrder, parent, children, preOrder, postOrder };
+        }
+
+        function buildForestGraphData(forest) {
+          const roots = new Set(forest.roots);
+          const nodeList = forest.visitOrder.map((id) => {
+            const pre = forest.preOrder.get(id);
+            const post = forest.postOrder.get(id);
+            const desc = forest.children.get(id) || [];
+            const isRoot = roots.has(id);
+            
+            return {
+              id,
+              label: `${id}\npre:${pre} post:${post}`,
+              title: isRoot
+                ? `Root: ${id}\npre-order: ${pre}\npost-order: ${post}\ndescendants: [${desc.join(', ')}]`
+                : `Node: ${id}\nparent: ${forest.parent.get(id)}\npre-order: ${pre}\npost-order: ${post}\ndescendants: [${desc.join(', ')}]`,
+              color: isRoot ? { background: '#7c4dff', border: '#9d79ff' } : { background: '#4a5568', border: '#718096' },
+              font: { multi: true, size: 11 },
+            };
+          });
+          const edgeList = [];
+          let edgeId = 0;
+          for (const [child, parent] of forest.parent) {
+            if (parent != null) {
+              edgeList.push({ id: edgeId++, from: parent, to: child, arrows: 'to' });
+            }
+          }
+          return { nodes: nodeList, edges: edgeList };
+        }
+
+        function renderForestGraph(data) {
+          const container = document.getElementById('dfs-forest-container');
+          if (!container) {
+            console.error('DFS forest container not found');
+            return;
+          }
+          if (forestNetwork) {
+            forestNetwork.destroy();
+            forestNetwork = null;
+          }
+          
+          console.log('Rendering forest with data:', data);
+          
+          if (!data.nodes || data.nodes.length === 0) {
+            container.innerHTML = '<div class="text-slate-400 text-sm p-4">No nodes to display</div>';
+            return;
+          }
+
+          const visData = {
+            nodes: new vis.DataSet(data.nodes),
+            edges: new vis.DataSet(data.edges),
+          };
+
+          const useHierarchical = data.edges.length > 0;
+          const options = {
+            nodes: {
+              shape: 'dot',
+              size: 16,
+              font: { color: '#e2e8f0', size: 11 },
+            },
+            edges: {
+              color: { color: '#64748b' },
+              width: 2,
+              arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+            },
+            layout: useHierarchical
+              ? {
+                  hierarchical: {
+                    enabled: true,
+                    direction: 'UD',
+                    sortMethod: 'directed',
+                    levelSeparation: 100,
+                    nodeSpacing: 150,
+                  },
+                }
+              : {
+                  randomSeed: 42,
+                },
+            physics: {
+              enabled: !useHierarchical,
+              stabilization: { iterations: 200 },
+              forceAtlas2Based: {
+                gravitationalConstant: -50,
+                centralGravity: 0.01,
+                springLength: 150,
+              },
+            },
+            interaction: {
+              zoomView: true,
+              dragView: true,
+              hover: true,
+            },
+          };
+
+          try {
+            forestNetwork = new vis.Network(container, visData, options);
+            console.log('Forest network created successfully');
+            
+            if (!useHierarchical) {
+              forestNetwork.once('stabilizationIterationsDone', () => {
+                forestNetwork.setOptions({ physics: { enabled: false } });
+              });
+            }
+            
+            setTimeout(() => {
+              if (forestNetwork) forestNetwork.fit({ animation: { duration: 500 } });
+            }, 100);
+          } catch (err) {
+            console.error('Error creating forest network:', err);
+            container.innerHTML = `<div class="text-red-400 text-sm p-4">Error rendering graph: ${err.message}</div>`;
+          }
+        }
+
+        function formatDfsForestOutput(forest) {
+          const lines = [];
+          lines.push(`Visit order: ${forest.visitOrder.join(' → ')}`);
+          lines.push('');
+          forest.roots.forEach((root, i) => {
+            lines.push(`Tree ${i + 1} (root: ${root}):`);
+            const inTree = new Set();
+            const collect = (n) => {
+              inTree.add(n);
+              for (const c of forest.children.get(n) || []) collect(c);
+            };
+            collect(root);
+            const treeNodes = forest.visitOrder.filter((n) => inTree.has(n));
+            treeNodes.forEach((n) => {
+              const p = forest.parent.get(n);
+              const desc = forest.children.get(n) || [];
+              const pre = forest.preOrder.get(n);
+              const post = forest.postOrder.get(n);
+              lines.push(`  ${n}: parent=${p ?? 'null'}, pre=${pre}, post=${post}, descendants=[${desc.join(', ')}]`);
+            });
+            lines.push('');
+          });
+          return lines.join('\n');
+        }
+
+        function runAlgorithm(algoName, algoFn) {
+          if (!graphData) {
+            document.getElementById('path-result').textContent = 'Load a graph first.';
+            return;
+          }
+          const source = document.getElementById('source-input').value.trim();
+          const target = document.getElementById('target-input').value.trim();
+          if (!source || !target) {
+            document.getElementById('path-result').textContent = 'Enter source and target vertices.';
+            return;
+          }
+          if (!graphData.nodes.includes(source) || !graphData.nodes.includes(target)) {
+            document.getElementById('path-result').textContent = `Vertices must be in the graph. Available: ${graphData.nodes.slice(0, 20).join(', ')}${graphData.nodes.length > 20 ? '...' : ''}`;
+            return;
+          }
+
+          resetHighlight();
+          const adj = buildAdjacency(graphData.nodes, graphData.edges, isDirected);
+          const { path, visited } = algoFn(adj, source, target);
+
+          const resultEl = document.getElementById('path-result');
+          if (path) {
+            resultEl.textContent = `${algoName}: Path found (length ${path.length - 1}): ${path.join(' → ')}`;
+            highlightPath(path, visited);
+            network.focus(path[Math.floor(path.length / 2)], { scale: 1.2, animation: true });
+          } else {
+            resultEl.textContent = `${algoName}: No path exists between ${source} and ${target}.`;
+            highlightPath([], visited);
+          }
+        }
+
+        document.getElementById('load-sample').addEventListener('click', () => {
+          const n = parseInt(document.getElementById('sample-select').value, 10);
+          const { nodes, edges } = generateSampleGraph(n);
+          loadGraph(nodes, edges);
+        });
+
+        document.querySelectorAll('input[name="graph-type"]').forEach((r) => {
+          r.addEventListener('change', updateGraph);
+        });
+
+        document.getElementById('fit-btn').addEventListener('click', () => {
+          if (network) network.fit({ animation: true });
+        });
+
+        document.getElementById('reset-btn').addEventListener('click', () => {
+          resetHighlight();
+          if (graphData) updateGraph();
+        });
+
+        document.getElementById('run-bfs').addEventListener('click', () =>
+          runAlgorithm('BFS', (adj, s, t) => bfs(adj, s, t))
+        );
+        document.getElementById('run-dfs').addEventListener('click', () =>
+          runAlgorithm('DFS', (adj, s, t) => dfs(adj, s, t))
+        );
+        document.getElementById('run-dijkstra').addEventListener('click', () =>
+          runAlgorithm('Dijkstra', (adj, s, t) => dijkstra(adj, s, t))
+        );
+
+        document.getElementById('run-dfs-forest').addEventListener('click', async () => {
+          if (!graphData) {
+            document.getElementById('dfs-forest-result').textContent = 'Load a graph first.';
+            return;
+          }
+          const startNode = document.getElementById('dfs-start-input').value.trim();
+          if (!startNode) {
+            document.getElementById('dfs-forest-result').textContent = 'Enter a start node.';
+            return;
+          }
+          if (!graphData.nodes.includes(startNode)) {
+            document.getElementById('dfs-forest-result').textContent = `Start node "${startNode}" not in graph. Available: ${graphData.nodes.slice(0, 20).join(', ')}${graphData.nodes.length > 20 ? '...' : ''}`;
+            return;
+          }
+          resetHighlight();
+          const progressEl = document.getElementById('dfs-forest-progress');
+          const progressBar = document.getElementById('dfs-progress-bar');
+          const progressLabel = document.getElementById('dfs-progress-label');
+          const progressPct = document.getElementById('dfs-progress-pct');
+          progressEl.classList.remove('hidden');
+          progressBar.style.width = '0%';
+          progressPct.textContent = '0%';
+          progressLabel.textContent = 'Running DFS...';
+
+          const adj = buildAdjacency(graphData.nodes, graphData.edges, isDirected);
+          const totalNodes = graphData.nodes.length;
+
+          const forest = await dfsForestWithProgress(adj, startNode, totalNodes, (visited, pct) => {
+            progressBar.style.width = pct + '%';
+            progressPct.textContent = pct + '%';
+            progressLabel.textContent = `Visited ${visited} nodes...`;
+          });
+
+          progressEl.classList.add('hidden');
+          const forestData = buildForestGraphData(forest);
+          renderForestGraph(forestData);
+          document.getElementById('dfs-forest-result').textContent = formatDfsForestOutput(forest);
+        });
+
+        document.getElementById('forest-fit-btn').addEventListener('click', () => {
+          if (forestNetwork) forestNetwork.fit({ animation: true });
+        });
+      })();
+    </script>
+  </body>
+</html>
